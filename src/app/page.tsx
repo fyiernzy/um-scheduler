@@ -1,138 +1,117 @@
 "use client";
-import { useEffect, useState } from "react";
-import Timetable from "./Timetable";
+import { useEffect, useState, useCallback } from "react";
+import Timetable from "./components/Timetable";
+import { CourseDetails } from "./components/CourseDetails";
+import { Course, Activity, Occurrence } from "./components/interfaces";
+import _ from "lodash";
 
-interface Activity {
-  Activity: string;
-  "Begin time": string;
-  "End time": string;
-  Room: string;
-  Day: string;
-}
+// Utility Functions
+const sortOccurrencesByNumber = (occurrences: Occurrence[]): Occurrence[] =>
+  _.sortBy(occurrences, (occurrence) => parseInt(occurrence.Occurrence));
 
-interface Occurrence {
-  Occurrence: string;
-  Activities: Activity[];
-}
-
-interface Course {
-  "Course Name": string;
-  "Course Code": string;
-  Occurrences: Occurrence[];
-}
-
-export default function Home() {
-  const [courses, setCourses] = useState<Course[]>([]);
-  const [selectedOccurrence, setSelectedOccurrence] = useState<string | null>(
-    null
+const doesOccurrenceConflict = (
+  selectedActivities: Activity[],
+  occurrence: Occurrence
+): boolean =>
+  occurrence.Activities.some((activity) =>
+    selectedActivities.some(
+      (selectedActivity) =>
+        activity.Day === selectedActivity.Day &&
+        !(
+          activity["Begin time"] >= selectedActivity["End time"] ||
+          activity["End time"] <= selectedActivity["Begin time"]
+        )
+    )
   );
 
-  // Fetch the JSON data
+// Fetch Courses Data
+const fetchCoursesData = async (): Promise<Course[]> => {
+  const response = await fetch("/course_data_final_fixed.json");
+  const data: Course[] = await response.json();
+  return data.map((course) => ({
+    ...course,
+    Occurrences: sortOccurrencesByNumber(course.Occurrences),
+  }));
+};
+
+// Main Home Component
+export default function Home() {
+  const [courses, setCourses] = useState<Course[]>([]);
+  const [selectedOccurrences, setSelectedOccurrences] = useState<
+    Map<string, string>
+  >(new Map());
+
+  // Fetch courses when component mounts
   useEffect(() => {
-    fetch("/course_data_final_fixed.json")
-      .then((response) => response.json())
-      .then((data) => {
-        const sortedCourses = data.map((course: Course) => ({
-          ...course,
-          Occurrences: course.Occurrences.sort(
-            (a, b) => parseInt(a.Occurrence) - parseInt(b.Occurrence)
-          ),
-        }));
-        setCourses(sortedCourses);
-      });
+    const loadCourses = async () => {
+      const data = await fetchCoursesData();
+      setCourses(data);
+    };
+    loadCourses();
   }, []);
 
-  const handleOccurrenceSelect = (occurrence: string) => {
-    setSelectedOccurrence(occurrence);
-  };
+  // Handle Occurrence Selection and Unselection
+  const handleOccurrenceSelect = useCallback(
+    (courseCode: string, occurrence: string) => {
+      setSelectedOccurrences((prev) => {
+        const updatedSelections = new Map(prev); // Clone the current selections map
+        const currentSelection = updatedSelections.get(courseCode);
+        if (currentSelection === occurrence) {
+          // If the user clicked the selected occurrence, unselect it (remove it)
+          console.log("Remove it!");
+          updatedSelections.delete(courseCode);
+        } else {
+          // Otherwise, select the occurrence
+          updatedSelections.set(courseCode, occurrence);
+        }
 
-  const isOccurrenceDisabled = (course: Course, occurrence: Occurrence) => {
-    if (!selectedOccurrence) return false;
+        return new Map(updatedSelections); // Return the new updated map to trigger a re-render
+      });
+    },
+    []
+  );
 
-    const selectedCourse = courses.find((c) =>
-      c.Occurrences.some((o) => o.Occurrence === selectedOccurrence)
-    );
+  // Check if Occurrence is Disabled
+  const isOccurrenceDisabled = useCallback(
+    (course: Course, occurrence: Occurrence): boolean => {
+      if (selectedOccurrences.size === 0) return false;
 
-    if (!selectedCourse) return false;
+      const selectedActivitiesByOtherCourses: Activity[] = [];
 
-    const selectedActivities =
-      selectedCourse.Occurrences.find(
-        (o) => o.Occurrence === selectedOccurrence
-      )?.Activities || [];
+      courses.forEach((c) => {
+        if (c["Course Code"] !== course["Course Code"]) {
+          const selectedOccurrence = selectedOccurrences.get(c["Course Code"]);
+          if (selectedOccurrence) {
+            const selectedOccurrenceActivities =
+              c.Occurrences.find((o) => o.Occurrence === selectedOccurrence)
+                ?.Activities || [];
+            selectedActivitiesByOtherCourses.push(
+              ...selectedOccurrenceActivities
+            );
+          }
+        }
+      });
 
-    return occurrence.Activities.some((activity) =>
-      selectedActivities.some(
-        (selectedActivity) =>
-          activity.Day === selectedActivity.Day &&
-          ((activity["Begin time"] >= selectedActivity["Begin time"] &&
-            activity["Begin time"] < selectedActivity["End time"]) ||
-            (activity["End time"] > selectedActivity["Begin time"] &&
-              activity["End time"] <= selectedActivity["End time"]) ||
-            (activity["Begin time"] <= selectedActivity["Begin time"] &&
-              activity["End time"] >= selectedActivity["End time"]))
-      )
-    );
-  };
+      return doesOccurrenceConflict(
+        selectedActivitiesByOtherCourses,
+        occurrence
+      );
+    },
+    [selectedOccurrences, courses]
+  );
 
   return (
     <div className="flex flex-col p-6 space-y-6">
-      <Timetable
-        courses={courses}
-        selectedOccurrence={selectedOccurrence}
-        onOccurrenceSelect={handleOccurrenceSelect}
-      />
+      {/* Pass the selected occurrences to the Timetable component */}
+      <Timetable courses={courses} selectedOccurrences={selectedOccurrences} />
       {courses.map((course, index) => (
-        <div key={index} className="flex items-start space-x-4">
-          {/* Course Name and Code */}
-          <div className="w-1/4 p-4">
-            <h3 className="text-xl font-semibold">{course["Course Name"]}</h3>
-            <p className="text-gray-500">{course["Course Code"]}</p>
-          </div>
-
-          {/* Occurrence and Activities */}
-          <div className="flex w-3/4 flex-wrap">
-            {course.Occurrences.map((occurrence, idx) => (
-              <div
-                key={idx}
-                className={`w-1/4 p-4 mb-4 border ${
-                  selectedOccurrence === occurrence.Occurrence
-                    ? "bg-blue-200"
-                    : isOccurrenceDisabled(course, occurrence)
-                    ? "bg-gray-200 cursor-not-allowed"
-                    : "border-red-500"
-                }`}
-              >
-                {/* Occurrence with radio button */}
-                <label className="flex items-center space-x-2">
-                  <input
-                    type="radio"
-                    name={`occurrence-${course["Course Code"]}`}
-                    value={occurrence.Occurrence}
-                    checked={selectedOccurrence === occurrence.Occurrence}
-                    onChange={() =>
-                      handleOccurrenceSelect(occurrence.Occurrence)
-                    }
-                    disabled={isOccurrenceDisabled(course, occurrence)}
-                    className="form-radio"
-                  />
-                  <span className="text-lg font-semibold">
-                    {occurrence.Occurrence}
-                  </span>
-                </label>
-                {occurrence.Activities.map((activity, i) => (
-                  <div key={i} className="mt-2 pt-2 border-t border-gray-400">
-                    <p className="font-semibold">{activity.Activity}</p>
-                    <p>
-                      {activity["Begin time"]} - {activity["End time"]}
-                    </p>
-                    <p className="text-sm text-gray-600">{activity.Day}</p>
-                    <p>{activity.Room}</p>
-                  </div>
-                ))}
-              </div>
-            ))}
-          </div>
-        </div>
+        <CourseDetails
+          key={index}
+          course={course}
+          selectedOccurrences={selectedOccurrences}
+          onOccurrenceSelect={handleOccurrenceSelect}
+          isOccurrenceDisabled={isOccurrenceDisabled}
+        />
       ))}
     </div>
   );
