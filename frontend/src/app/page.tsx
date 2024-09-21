@@ -26,7 +26,7 @@ const doesOccurrenceConflict = (
 
 // Fetch Courses Data
 const fetchCoursesData = async (): Promise<Course[]> => {
-  const response = await fetch("/course_data_final_fixed.json");
+  const response = await fetch("/course_data.json");
   const data: Course[] = await response.json();
   return data.map((course) => ({
     ...course,
